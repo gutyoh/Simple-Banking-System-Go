@@ -1,0 +1,14 @@
+type: edu
+files:
+  - name: tests.py
+    visible: false
+  - name: test/tests.py
+    visible: false
+  - name: test/__init__.py
+    visible: false
+  - name: main.go
+    visible: true
+  - name: go.mod
+    visible: true
+  - name: main.exe
+    visible: true

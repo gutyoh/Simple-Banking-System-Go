@@ -1,0 +1,33 @@
+# .gitignore
+
+# Ignore PyCharm project settings
+.idea/
+
+# Ignore Python cache files and directories
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyc.py
+
+# Ignore OS generated files
+.DS_Store
+Thumbs.db
+
+# Ignore Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Ignore Python virtual environments
+venv/
+*.venv
+.env
+*venv/
+
+# Ignore VSCode project settings
+.vscode/
+
+# Ignore the .golangci.yml file
+.golangci.yml
+
+# Ignore the flashcard.db file
+flashcard.db

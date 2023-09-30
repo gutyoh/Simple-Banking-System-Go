@@ -1,0 +1,26 @@
+type: edu
+files:
+  - name: test/__init__.py
+    visible: false
+  - name: temp_gorm/main.go
+    visible: true
+  - name: temp_sqlx/main.go
+    visible: true
+  - name: test/tests.py
+    visible: false
+  - name: main.go
+    visible: true
+  - name: tests.py
+    visible: false
+  - name: temp_sqlx/main2.go
+    visible: true
+  - name: temp_sqlx/main3.go
+    visible: true
+  - name: go.sum
+    visible: true
+  - name: go.mod
+    visible: true
+  - name: main.exe
+    visible: true
+  - name: card.s3db
+    visible: true
