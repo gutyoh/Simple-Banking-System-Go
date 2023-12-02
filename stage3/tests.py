@@ -1,4 +1,4 @@
-from test.tests import BankingSystem
+from test.tests import SimpleBankSystemTest
 
 if __name__ == '__main__':
-    BankingSystem('banking.banking').run_tests()
+    SimpleBankSystemTest('banking.banking').run_tests()

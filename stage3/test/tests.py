@@ -1,267 +1,380 @@
-from hstest.exceptions import WrongAnswer
-from hstest.test_case import CheckResult
-from hstest.stage_test import StageTest
-from hstest.test_case import TestCase
-from shutil import copy2
 import os
-import sqlite3
 import random
 import re
+import shutil
+import sqlite3
 
-card_number = ''
-pin = ''
-are_all_inputs_read = False
-db_file_name = 'card.s3db'
-temp_db_file_name = 'temp.s3db'
+from hstest import dynamic_test, StageTest, CheckResult, TestedProgram
 
 
-def get_credentials(output: str):
-    number = re.findall(r'^400000\d{10}$', output, re.MULTILINE)
-    if not number:
-        raise WrongAnswer('You are printing the card number incorrectly. '
-                                   'The card number should look like in the example: 400000DDDDDDDDDD,'
-                                   ' where D is a digit.\nMake sure the card number is 16-digit length and '
-                                   'you don\'t print any extra spaces at the end of the line!')
+class SimpleBankSystemTest(StageTest):
+    database_file_name = 'card.s3db'
+    temp_database_file_name = 'tempDatabase.s3db'
+    args = ['-fileName', database_file_name]
+    table_name = 'cards'
+    correct_data = {}
 
-    PIN = re.findall(r'^\d{4}$', output, re.MULTILINE)
-    if not PIN:
-        raise WrongAnswer('You are printing the card PIN incorrectly. '
-                                   'The PIN should look like in the example: DDDD, where D is a digit.\n'
-                                   'Make sure the PIN is 4-digit length and you don\'t print any extra spaces at the'
-                                   ' end of the line!')
+    card_number_pattern = re.compile(r'^400000\d{10}$', re.MULTILINE)
+    pin_pattern = re.compile(r'^\d{4}$', re.MULTILINE)
 
-    return number[0], PIN[0]
+    connection = None
 
+    @dynamic_test(time_limit=60000)
+    def test1_check_database_file(self):
+        program = TestedProgram()
+        program.start(*self.args)
 
-def test_card_generation(output: str, value_to_return):
-    global card_number, pin, are_all_inputs_read
-    are_all_inputs_read = False
-    credentials = get_credentials(output)
-    card_number = credentials[0]
-    pin = credentials[1]
-    return value_to_return
+        self.stop_and_check_if_user_program_was_stopped(program)
 
+        if not os.path.exists(self.database_file_name):
+            return CheckResult.wrong(
+                "You should create a database file named " + self.database_file_name + ". "
+                                                                                       "The file name should be taken from the command line arguments.\n"
+                                                                                       "The database file shouldn't be deleted after stopping the program!"
+            )
 
-def test_difference_between_generations(output: str, value_to_return):
-    global card_number, pin, are_all_inputs_read
-    credentials = get_credentials(output)
-    another_card_number = credentials[0]
+        return CheckResult.correct()
 
-    if another_card_number == card_number:
-        return CheckResult.wrong('Your program generates two identical card numbers!')
-    are_all_inputs_read = True
+    @dynamic_test(time_limit=60000)
+    def test2_check_connection(self):
+        program = TestedProgram()
+        program.start(*self.args)
 
-    return value_to_return
+        self.stop_and_check_if_user_program_was_stopped(program)
 
+        self.get_connection()
+        self.close_connection()
 
-def test_sign_in_with_correct_credentials(output: str, value_to_return):
-    global card_number, pin
-    return '{}\n{}'.format(card_number, pin)
+        return CheckResult.correct()
 
+    @dynamic_test(time_limit=60000)
+    def test3_check_if_table_exists(self):
+        program = TestedProgram()
+        program.start(*self.args)
 
-def test_output_after_correct_sign_in(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'successfully' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'successfully\' in your output after signing in with correct credentials')
-    return value_to_return
+        self.stop_and_check_if_user_program_was_stopped(program)
 
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type ='table' AND name NOT LIKE 'sqlite_%';")
+            table_names = [table_name[0] for table_name in cursor.fetchall()]
 
-def test_sign_in_with_wrong_pin(output: str, value_to_return):
-    global card_number, pin
-    wrong_pin = pin
-    while pin == wrong_pin:
-        wrong_pin = ''.join(list(map(str, random.sample(range(1, 10), 4))))
-    return '{}\n{}\n'.format(card_number, wrong_pin)
+            if self.table_name in table_names:
+                self.close_connection()
+                return CheckResult.correct()
+        except sqlite3.Error:
+            self.close_connection()
+            raise Exception("Can't execute a query in your database! Make sure that your database isn't broken "
+                            "and you close your connection at the end of the program!")
 
+        self.close_connection()
+        return CheckResult.wrong("Your database doesn't have a table named " + self.table_name + "!\n"
+                                                                                                 "Found tables: " + ", ".join(
+            table_names))
 
-def test_output_after_wrong_pin(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'wrong' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'wrong\' in your output after signing in with incorrect credentials')
-    return value_to_return
+    @dynamic_test(time_limit=60000)
+    def test4_check_columns(self):
+        program = TestedProgram()
+        program.start(*self.args)
 
+        self.stop_and_check_if_user_program_was_stopped(program)
 
-def test_sign_in_with_wrong_card_number(output: str, value_to_return):
-    global card_number, pin
-    wrong_card_number = card_number
-    while wrong_card_number == card_number:
-        temp = [4, 0, 0, 0, 0, 0]
-        for _ in range(10):
-            temp.append(random.randint(1, 9))
-        wrong_card_number = ''.join(list(map(str, temp)))
-    return '{}\n{}\n'.format(wrong_card_number, pin)
+        try:
+            conn = self.get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(" + self.table_name + ");")
+            columns = {column['name'].lower(): column['type'].upper() for column in cursor.fetchall()}
 
+            correct_columns = [
+                ["id", "INTEGER", "INT"],
+                ["number", "TEXT", "VARCHAR"],
+                ["pin", "TEXT", "VARCHAR"],
+                ["balance", "INTEGER", "INT"]]
 
-def test_output_after_wrong_card_number(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'wrong' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'wrong\' in your output after signing in with incorrect credentials')
-    return value_to_return
-
-
-def is_passed_luhn_algorithm(number):
-    luhn = [int(char) for char in str(number)]
-    for i, num in enumerate(luhn):
-        if (i + 1) % 2 == 0:
-            continue
-        temp = num * 2
-        luhn[i] = temp if temp < 10 else temp - 9
-    return sum(luhn) % 10 == 0
-
-
-def test_luhn_algorithm(output: str, correct_num_of_cards):
-    global are_all_inputs_read
-
-    numbers = re.findall(r'400000\d{10,}', output, re.MULTILINE)
-
-    for number in numbers:
-        if len(number) != 16:
-            return CheckResult.wrong(f'Wrong card number \'{number}\'. The card number should be 16-digit length.')
-        if not is_passed_luhn_algorithm(number):
-            return CheckResult.wrong('The card number \'{}\' doesn\'t pass luhn algorithm!'.format(number))
-
-    if len(numbers) != correct_num_of_cards:
-        return CheckResult.wrong(
-            f'After creating {correct_num_of_cards} cards, found {len(numbers)} cards with correct format\n'
-            f'The card number should be 16-digit length and should start with 400000.')
-
-    are_all_inputs_read = True
-    return '0'
-
-
-def check_db(output: str, value_to_return):
-    if not os.path.exists(db_file_name):
-        return CheckResult.wrong('Can\'t find db file named \'{}\''.format(db_file_name))
-    try:
-        copy2(db_file_name, temp_db_file_name)
-    except Exception:
-        return CheckResult.wrong('Can\'t copy database file!')
-
-    try:
-        with sqlite3.connect(db_file_name) as db:
-            response = db.execute(
-                'SELECT name FROM sqlite_master WHERE type = \'table\' AND name NOT LIKE \'sqlite_%\';')
-            for _ in response.fetchall():
-                if 'card' in _:
-                    break
-            else:
-                return CheckResult.wrong('Your database doesn\'t have a table named \'card\'')
-    except Exception as exp:
-        return CheckResult.wrong('Can\'t connect to the database!')
-
-    correct_columns = (('ID', 'INTEGER'), ('NUMBER', 'TEXT'), ('PIN', 'TEXT'), ('BALANCE', 'INTEGER'))
-
-    try:
-        with sqlite3.connect(db_file_name) as db:
-            response = db.execute('PRAGMA table_info(card);')
-            real_columns = response.fetchall()
             for correct_column in correct_columns:
-                for real_column in real_columns:
-                    real_column = [str(element).upper() for element in real_column]
-                    if correct_column[0] in real_column and correct_column[1] in real_column:
-                        break
-                else:
-                    return CheckResult.wrong(
-                        f'Can\'t find column named \'{correct_column[0].lower()}\' with \'{correct_column[1]}\' type.\n'
-                        'Your table should have columns described in the stage instructions.')
-    except Exception as ignored:
-        return CheckResult.wrong('Can\'t connect to the database!')
+                error_message = "Can't find '" + correct_column[0] + "' column with '" + correct_column[
+                    1] + "' type.\n" + "Your table should have columns described in " + "the stage instructions."
+                if correct_column[0] not in columns:
+                    return CheckResult.wrong(error_message)
+                elif correct_column[1] not in columns[correct_column[0]] and correct_column[2] not in \
+                        columns[correct_column[0]]:
+                    return CheckResult.wrong(error_message)
+        except sqlite3.Error:
+            raise Exception("Can't connect to the database!")
 
-    return CheckResult.correct()
+        self.close_connection()
+        return CheckResult.correct()
 
+    @dynamic_test
+    def test5_check_adding_rows_to_the_table(self):
+        self.delete_all_rows()
 
-def check_db_rows(output, attach):
-    correct_num_of_cards = 10
-    numbers = re.findall(r'400000\d{10,}', output, re.MULTILINE)
+        program = TestedProgram()
+        program.start(*self.args)
 
-    for number in numbers:
-        if len(number) != 16:
-            return CheckResult.wrong(f'Wrong card number \'{number}\'. The card number should be 16-digit length.')
-        if not is_passed_luhn_algorithm(number):
-            return CheckResult.wrong('The card number \'{}\' doesn\'t pass luhn algorithm!'.format(number))
+        output = program.execute("1")
 
-    if len(numbers) != correct_num_of_cards:
-        return CheckResult.wrong(
-            f'After creating {correct_num_of_cards} cards, found {len(numbers)} cards with correct format\n'
-            f'The card number should be 16-digit length and should start with 400000.')
+        if not self.get_data(output):
+            return CheckResult.wrong("You should output card number and PIN like in example\n" +
+                                     "Or it doesn't pass the Luhn algorithm")
 
-    with sqlite3.connect(db_file_name) as db:
-        rows = db.execute('SELECT * FROM card').fetchall()
-        for number in numbers:
-            if len(number) != 16:
-                return CheckResult.wrong(f'Wrong card number \'{number}\'. The card number should be 16-digit length.')
+        output = program.execute("1")
+
+        if not self.get_data(output):
+            return CheckResult.wrong("You should output card number and PIN like in example\n" +
+                                     "Or it doesn't pass the Luhn algorithm")
+
+        output = program.execute("1")
+
+        if not self.get_data(output):
+            return CheckResult.wrong("You should output card number and PIN like in example\n" +
+                                     "Or it doesn't pass the Luhn algorithm")
+
+        output = program.execute("1")
+
+        if not self.get_data(output):
+            return CheckResult.wrong("You should output card number and PIN like in example\n" +
+                                     "Or it doesn't pass the Luhn algorithm")
+
+        output = program.execute("1")
+
+        if not self.get_data(output):
+            return CheckResult.wrong("You should output card number and PIN like in example\n" +
+                                     "Or it doesn't pass the Luhn algorithm")
+
+        self.stop_and_check_if_user_program_was_stopped(program)
+
+        try:
+            conn = self.get_connection()
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM {self.table_name};")
+            user_data = {}
+
+            rows = cursor.fetchall()
             for row in rows:
-                if number in row:
-                    break
-            else:
-                return CheckResult.wrong('Your database doesn’t save newly created cards.\n'
-                                         'Make sure you commit your DB changes right after saving a new card in the database!')
-    return CheckResult.correct()
+                # print(row['number'])
+                if row['number'] is None:
+                    return CheckResult.wrong("The card number shouldn't be null in the database!")
+                if row['balance'] != 0:
+                    return CheckResult.wrong("Default balance value should be 0 in the database!")
+                if row['pin'] is None:
+                    return CheckResult.wrong("The PIN shouldn't be null in the database!")
+                user_data[row['number']] = row['pin']
 
+            for card_number, pin in self.correct_data.items():
+                if card_number not in user_data:
+                    return CheckResult.wrong("Your database doesn't save newly created cards.")
+                elif user_data[card_number] != pin:
+                    return CheckResult.wrong(f"Correct PIN for card number {card_number} should be {pin}")
 
-class BankingSystem(StageTest):
+        except sqlite3.Error:
+            return CheckResult.wrong("Can't connect the database!")
 
-    def generate(self):
-        return [
-            TestCase(
-                stdin='0',
-                check_function=check_db,
-            ),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '1'),
-                    lambda output: test_difference_between_generations(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1\n1\n1\n1\n1\n1\n1\n1',
-                    lambda output: test_luhn_algorithm(output, 8),
-                ]),
-            TestCase(
-                stdin='1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n0',
-                check_function=check_db_rows
-            ),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_correct_credentials(output, None),
-                    lambda output: test_output_after_correct_sign_in(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_wrong_pin(output, None),
-                    lambda output: test_output_after_wrong_pin(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_wrong_card_number(output, None),
-                    lambda output: test_output_after_wrong_card_number(output, '0')
-                ])
-        ]
+        self.close_connection()
+        return CheckResult.correct()
 
-    def check(self, reply: str, attach) -> CheckResult:
-        if are_all_inputs_read:
-            return CheckResult.correct()
-        else:
-            return CheckResult.wrong('You didn\'t read all inputs!')
+    @dynamic_test(time_limit=60000)
+    def test6_check_log_in(self):
+        program = TestedProgram()
+        program.start(*self.args)
 
-    def after_all_tests(self):
-        if os.path.exists('temp.s3db'):
-            copy2('temp.s3db', 'card.s3db')
-            os.remove('temp.s3db')
+        output = program.execute("1")
+
+        card_number_matcher = self.card_number_pattern.search(output)
+
+        if not card_number_matcher:
+            return CheckResult.wrong("You are printing the card number " +
+                                     "incorrectly. The card number should look like in the example:" +
+                                     " 400000DDDDDDDDDD, where D is a digit.")
+
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not pin_matcher:
+            return CheckResult.wrong("You are printing the card PIN " +
+                                     "incorrectly. The PIN should look like in the example: DDDD, where D is a digit.")
+
+        correct_pin = pin_matcher.group().strip()
+        correct_card_number = card_number_matcher.group()
+
+        program.execute("2")
+        output = program.execute(correct_card_number + "\n" + correct_pin)
+
+        if "successfully" not in output.lower():
+            return CheckResult.wrong("The user should be signed in after" +
+                                     " entering the correct card information.")
+
+        self.stop_and_check_if_user_program_was_stopped(program)
+
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test7_check_log_in_with_wrong_pin(self):
+        program = TestedProgram()
+        program.start(*self.args)
+
+        output = program.execute("1")
+
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong("You should output card number and PIN like in example")
+
+        correct_card_number = card_number_matcher.group()
+        correct_pin = pin_matcher.group()
+
+        incorrect_pin = correct_pin
+
+        while correct_pin == incorrect_pin:
+            incorrect_pin = str(1000 + random.randint(0, 8999))
+
+        program.execute("2")
+        output = program.execute(correct_card_number + "\n" + incorrect_pin)
+
+        if "successfully" in output.lower():
+            return CheckResult.wrong("The user should not be signed in" +
+                                     " after entering incorrect card information.")
+
+        self.stop_and_check_if_user_program_was_stopped(program)
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test8_check_log_in_to_not_existing_account(self):
+        program = TestedProgram()
+        program.start(*self.args)
+
+        output = program.execute("1")
+
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong("You should output card number and PIN like in example")
+
+        correct_card_number = card_number_matcher.group()
+
+        random.seed()
+
+        correct_pin = pin_matcher.group().strip()
+        incorrect_card_number = correct_card_number
+
+        while correct_card_number == incorrect_card_number:
+            incorrect_card_number = '400000' + str(100000000 + random.randint(0, 800000000))
+
+        program.execute("2")
+        output = program.execute(incorrect_card_number + "\n" + correct_pin)
+
+        if "successfully" in output.lower():
+            return CheckResult.wrong("The user should not be signed in" +
+                                     " after entering incorrect card information.")
+
+        self.stop_and_check_if_user_program_was_stopped(program)
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test9_check_balance(self):
+        program = TestedProgram()
+        program.start(*self.args)
+
+        output = program.execute("1")
+
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong("You should output card number and PIN like in example")
+
+        correct_pin = pin_matcher.group().strip()
+        correct_card_number = card_number_matcher.group()
+
+        program.execute("2")
+        program.execute(correct_card_number + "\n" + correct_pin)
+
+        output = program.execute("1")
+
+        if "0" not in output:
+            return CheckResult.wrong("Expected balance: 0")
+
+        self.stop_and_check_if_user_program_was_stopped(program)
+        return CheckResult.correct()
+
+    @staticmethod
+    def get_connection():
+        if SimpleBankSystemTest.connection is None:
+            SimpleBankSystemTest.connection = sqlite3.connect(SimpleBankSystemTest.database_file_name)
+        return SimpleBankSystemTest.connection
+
+    @staticmethod
+    def close_connection():
+        if SimpleBankSystemTest.connection is not None:
+            SimpleBankSystemTest.connection.close()
+            SimpleBankSystemTest.connection = None
+
+    @staticmethod
+    def create_temp_database():
+        SimpleBankSystemTest.close_connection()
+
+        if os.path.exists(SimpleBankSystemTest.database_file_name):
+            if os.path.exists(SimpleBankSystemTest.temp_database_file_name):
+                os.remove(SimpleBankSystemTest.temp_database_file_name)
+            shutil.move(SimpleBankSystemTest.database_file_name, SimpleBankSystemTest.temp_database_file_name)
+
+    @staticmethod
+    def delete_temp_database():
+        SimpleBankSystemTest.close_connection()
+
+        if os.path.exists(SimpleBankSystemTest.temp_database_file_name):
+            if os.path.exists(SimpleBankSystemTest.database_file_name):
+                os.remove(SimpleBankSystemTest.database_file_name)
+            shutil.move(SimpleBankSystemTest.temp_database_file_name, SimpleBankSystemTest.database_file_name)
+
+    def get_data(self, out):
+        card_number_matcher = self.card_number_pattern.search(out)
+        pin_matcher = self.pin_pattern.search(out)
+
+        if not card_number_matcher or not pin_matcher:
+            return False
+
+        number = card_number_matcher.group()
+        PIN = pin_matcher.group()
+
+        if not self.check_luhn_algorithm(number):
+            return False
+
+        self.correct_data[number] = PIN
+
+        return True
+
+    @staticmethod
+    def check_luhn_algorithm(card_number):
+        result = 0
+        for i in range(len(card_number)):
+            digit = int(card_number[i])
+            if i % 2 == 0:
+                double_digit = digit * 2 if digit * 2 <= 9 else digit * 2 - 9
+                result += double_digit
+                continue
+            result += digit
+        return result % 10 == 0
+
+    def delete_all_rows(self):
+        try:
+            cursor = self.get_connection().cursor()
+            cursor.execute(f"DELETE FROM {self.table_name};")
+            self.close_connection()
+        except sqlite3.Error:
+            raise Exception("Can't execute a query in your database! Make sure that your database isn't broken "
+                            "and you close your connection at the end of the program!")
+
+    @staticmethod
+    def stop_and_check_if_user_program_was_stopped(program):
+        program.execute("0")
+        if not program.is_finished():
+            raise Exception("After choosing 'Exit' item you should stop your program and close database connection!")
 
 
 if __name__ == '__main__':
-    BankingSystem('banking.banking').run_tests()
+    SimpleBankSystemTest().run_tests()

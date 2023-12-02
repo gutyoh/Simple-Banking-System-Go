@@ -1,179 +1,236 @@
-from hstest.exceptions import WrongAnswer
-from hstest.test_case import CheckResult
-from hstest.stage_test import StageTest
-from hstest.test_case import TestCase
 import random
 import re
 
-card_number = ''
-pin = ''
-are_all_inputs_read = False
+from hstest import dynamic_test, StageTest, CheckResult, TestedProgram
 
 
-def get_credentials(output: str):
-    number = re.findall(r'^400000\d{10}$', output, re.MULTILINE)
-    if not number:
-        raise WrongAnswer('You are printing the card number incorrectly. '
-                                   'The card number should look like in the example: 400000DDDDDDDDDD,'
-                                   ' where D is a digit.\nMake sure the card number is 16-digit length and '
-                                   'you don\'t print any extra spaces at the end of the line!')
+class SimpleBankSystemTest(StageTest):
+    card_number_pattern = re.compile(r'^400000\d{10}$', re.MULTILINE)
+    pin_pattern = re.compile(r'^\d{4}$', re.MULTILINE)
 
-    PIN = re.findall(r'^\d{4}$', output, re.MULTILINE)
-    if not PIN:
-        raise WrongAnswer('You are printing the card PIN incorrectly. '
-                                   'The PIN should look like in the example: DDDD, where D is a digit.\n'
-                                   'Make sure the PIN is 4-digit length and you don\'t print any extra spaces at the'
-                                   ' end of the line!')
+    @dynamic_test(time_limit=60000)
+    def test1_check_card_credentials(self):
+        program = TestedProgram()
+        program.start()
 
-    return number[0], PIN[0]
+        output = program.execute('1')
 
+        card_number_matcher = self.card_number_pattern.search(output)
 
-def test_card_generation(output: str, value_to_return):
-    global card_number, pin, are_all_inputs_read
-    are_all_inputs_read = False
-    credentials = get_credentials(output)
-    card_number = credentials[0]
-    pin = credentials[1]
-    return value_to_return
+        if not card_number_matcher:
+            return CheckResult.wrong(
+                'You are printing the card number incorrectly. '
+                'The card number should look like in the example: 400000DDDDDDDDDD, '
+                'where D is a digit.')
 
+        pin_matcher = self.pin_pattern.search(output)
 
-def test_difference_between_generations(output: str, value_to_return):
-    global card_number, pin, are_all_inputs_read
-    credentials = get_credentials(output)
-    another_card_number = credentials[0]
+        if not pin_matcher:
+            return CheckResult.wrong(
+                'You are printing the card PIN incorrectly. '
+                'The PIN should look like in the example: DDDD, where D is a digit.')
 
-    if another_card_number == card_number:
-        return CheckResult.wrong('Your program generates two identical card numbers!')
-    are_all_inputs_read = True
+        correct_card_number = card_number_matcher.group()
 
-    return value_to_return
+        output = program.execute('1')
+        card_number_matcher = self.card_number_pattern.search(output)
 
+        if not card_number_matcher:
+            return CheckResult.wrong(
+                'You are printing the card number incorrectly. '
+                'The card number should look like in the example: 400000DDDDDDDDDD, '
+                'where D is a digit.')
 
-def test_sign_in_with_correct_credentials(output: str, value_to_return):
-    global card_number, pin
-    return '{}\n{}'.format(card_number, pin)
+        pin_matcher = self.pin_pattern.search(output)
 
+        if not pin_matcher:
+            return CheckResult.wrong(
+                'You are printing the card PIN incorrectly. '
+                'The PIN should look like in the example: DDDD, where D is a digit.')
 
-def test_output_after_correct_sign_in(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'successfully' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'successfully\' in your output after signing in with correct credentials')
-    return value_to_return
+        another_card_number = card_number_matcher.group()
 
+        if another_card_number == correct_card_number:
+            return CheckResult.wrong('Your program generates two identical card numbers!')
 
-def test_sign_in_with_wrong_pin(output: str, value_to_return):
-    global card_number, pin
-    wrong_pin = pin
-    while pin == wrong_pin:
-        wrong_pin = ''.join(list(map(str, random.sample(range(1, 10), 4))))
-    return '{}\n{}\n'.format(card_number, wrong_pin)
+        program.execute('0')
 
+        return CheckResult.correct()
 
-def test_output_after_wrong_pin(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'wrong' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'wrong\' in your output after signing in with incorrect credentials')
-    return value_to_return
+    @dynamic_test(time_limit=60000)
+    def test2_check_log_in_and_log_out(self):
+        program = TestedProgram()
+        program.start()
 
+        output = program.execute('1')
 
-def test_sign_in_with_wrong_card_number(output: str, value_to_return):
-    global card_number, pin
-    wrong_card_number = card_number
-    while wrong_card_number == card_number:
-        temp = [4, 0, 0, 0, 0, 0]
-        for _ in range(10):
-            temp.append(random.randint(1, 9))
-        wrong_card_number = ''.join(list(map(str, temp)))
-    return '{}\n{}\n'.format(wrong_card_number, pin)
+        card_number_matcher = self.card_number_pattern.search(output)
 
+        if not card_number_matcher:
+            return CheckResult.wrong(
+                'You are printing the card number incorrectly. '
+                'The card number should look like in the example: 400000DDDDDDDDDD, '
+                'where D is a digit.')
 
-def test_output_after_wrong_card_number(output: str, value_to_return):
-    global are_all_inputs_read
-    are_all_inputs_read = True
-    if 'wrong' not in output.lower():
-        return CheckResult.wrong(
-            'There is no \'wrong\' in your output after signing in with incorrect credentials')
-    return value_to_return
+        pin_matcher = self.pin_pattern.search(output)
 
+        if not pin_matcher:
+            return CheckResult.wrong(
+                'You are printing the card PIN incorrectly. '
+                'The PIN should look like in the example: DDDD, where D is a digit.')
+        correct_pin = pin_matcher.group().strip()
+        correct_card_number = card_number_matcher.group()
 
-def is_passed_luhn_algorithm(number):
-    luhn = [int(char) for char in str(number)]
-    for i, num in enumerate(luhn):
-        if (i + 1) % 2 == 0:
-            continue
-        temp = num * 2
-        luhn[i] = temp if temp < 10 else temp - 9
-    return sum(luhn) % 10 == 0
+        program.execute('2')
+        output = program.execute('{}\n{}'.format(correct_card_number, correct_pin))
 
+        if 'successfully' not in output.lower():
+            return CheckResult.wrong(
+                'The user should be signed in after entering the correct card information.')
 
-def test_luhn_algorithm(output: str, correct_num_of_cards):
-    global are_all_inputs_read
+        output = program.execute('2')
 
-    numbers = re.findall(r'400000\d{10,}', output, re.MULTILINE)
+        if 'create' not in output.lower():
+            return CheckResult.wrong(
+                'The user should be logged out after choosing \'Log out\' option.\n'
+                'And you should print the menu with \'Create an account\' option.')
 
-    for number in numbers:
-        if len(number) != 16:
-            return CheckResult.wrong(f'Wrong card number \'{number}\'. The card number should be 16-digit length.')
-        if not is_passed_luhn_algorithm(number):
-            return CheckResult.wrong('The card number \'{}\' doesn\'t pass luhn algorithm!'.format(number))
+        program.execute('0')
 
-    if len(numbers) != correct_num_of_cards:
-        return CheckResult.wrong(
-            f'After creating {correct_num_of_cards} cards, found {len(numbers)} cards with correct format\n'
-            f'The card number should be 16-digit length and should start with 400000.')
+        return CheckResult.correct()
 
-    are_all_inputs_read = True
-    return '0'
+    @dynamic_test(time_limit=60000)
+    def test3_check_log_in_with_wrong_pin(self):
+        program = TestedProgram()
+        program.start()
 
+        output = program.execute('1')
 
-class BankingSystem(StageTest):
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
 
-    def generate(self):
-        return [
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '1'),
-                    lambda output: test_difference_between_generations(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_correct_credentials(output, None),
-                    lambda output: test_output_after_correct_sign_in(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_wrong_pin(output, None),
-                    lambda output: test_output_after_wrong_pin(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1',
-                    lambda output: test_card_generation(output, '2'),
-                    lambda output: test_sign_in_with_wrong_card_number(output, None),
-                    lambda output: test_output_after_wrong_card_number(output, '0')
-                ]),
-            TestCase(
-                stdin=[
-                    '1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1',
-                    lambda output: test_luhn_algorithm(output, 11),
-                ])
-        ]
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong('You should output card number and PIN like in example!')
 
-    def check(self, reply: str, attach) -> CheckResult:
-        if are_all_inputs_read:
-            return CheckResult.correct()
-        else:
-            return CheckResult.wrong('You didn\'t read all inputs!')
+        correct_card_number = card_number_matcher.group()
+        correct_pin = pin_matcher.group()
+
+        random.seed()
+
+        incorrect_pin = correct_pin
+
+        while correct_pin == incorrect_pin:
+            incorrect_pin = str(1000 + random.randint(0, 8999))
+
+        program.execute('2')
+        output = program.execute('{}\n{}'.format(correct_card_number, incorrect_pin))
+
+        if 'successfully' in output.lower():
+            return CheckResult.wrong(
+                'The user should not be signed in after entering incorrect card information.')
+
+        program.execute('0')
+
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test4_check_log_in_to_not_existing_account(self):
+        program = TestedProgram()
+        program.start()
+
+        output = program.execute('1')
+
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong('You should output card number and PIN like in example')
+
+        correct_card_number = card_number_matcher.group()
+
+        random.seed()
+
+        correct_pin = pin_matcher.group().strip()
+        incorrect_card_number = correct_card_number
+
+        while correct_card_number == incorrect_card_number:
+            incorrect_card_number = '400000' + str(100000000 + random.randint(0, 800000000))
+
+        program.execute('2')
+        output = program.execute('{}\n{}'.format(incorrect_card_number, correct_pin))
+
+        if 'successfully' in output.lower():
+            return CheckResult.wrong(
+                'The user should not be signed in after entering the information of a non-existing card.')
+
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test5_check_balance(self):
+        program = TestedProgram()
+        program.start()
+
+        output = program.execute('1')
+
+        card_number_matcher = self.card_number_pattern.search(output)
+        pin_matcher = self.pin_pattern.search(output)
+
+        if not card_number_matcher or not pin_matcher:
+            return CheckResult.wrong('You should output card number and PIN like in example')
+
+        correct_pin = pin_matcher.group().strip()
+        correct_card_number = card_number_matcher.group()
+
+        program.execute('2')
+        program.execute('{}\n{}'.format(correct_card_number, correct_pin))
+        output = program.execute('1')
+
+        if '0' not in output:
+            return CheckResult.wrong('Expected balance: 0')
+
+        program.execute('0')
+
+        return CheckResult.correct()
+
+    @dynamic_test(time_limit=60000)
+    def test6_check_luhn_algorithm(self):
+        program = TestedProgram()
+        program.start()
+
+        output = program.execute("1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1\n1")
+
+        card_number_matcher = self.card_number_pattern.findall(output)
+
+        is_some_card_found = False
+        found_cards = 0
+
+        for card_number in card_number_matcher:
+            found_cards += 1
+
+            if not is_some_card_found:
+                is_some_card_found = True
+
+            if not self.check_luhn_algorithm(card_number):
+                return CheckResult.wrong(f"The card number {card_number} doesn't pass the Luhn algorithm.")
+
+        if not is_some_card_found:
+            return CheckResult.wrong("You should output card number and PIN like in example")
+
+        if found_cards != 20:
+            return CheckResult.wrong(f"Tried to generate 20 cards, but found {found_cards}")
+
+        return CheckResult.correct()
+
+    @staticmethod
+    def check_luhn_algorithm(number):
+        luhn = [int(char) for char in str(number)]
+        for i, num in enumerate(luhn):
+            if (i + 1) % 2 == 0:
+                continue
+            temp = num * 2
+            luhn[i] = temp if temp < 10 else temp - 9
+        return sum(luhn) % 10 == 0
 
 
 if __name__ == '__main__':
-    BankingSystem('banking.banking').run_tests()
+    SimpleBankSystemTest().run_tests()
